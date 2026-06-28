@@ -56,6 +56,16 @@ python -m src.eval  --ckpt results/phase1_frozen/best.pt --manifest data/manifes
 # big gap (norm << raw) = model was riding compression, not artifacts.
 ```
 
+## 7b. Save & download the trained model
+Training auto-saves `results/<run_name>/best.pt` **and** `last.pt` — *trainable weights only*, so
+frozen/LoRA checkpoints are a few MB (full-FT ~1.2 GB). Get it off the pod with whichever is easiest:
+- **HF Hub (best — pull it anywhere):**
+  `python -m src.upload_model --ckpt results/phase1_frozen/best.pt --repo <you>/nb-detector`
+  then later `huggingface-cli download <you>/nb-detector best.pt --local-dir .`
+- **JupyterLab:** right-click the `.pt` → Download (fine for small frozen/LoRA ckpts).
+- **runpodctl:** `runpodctl send results/phase1_frozen/best.pt` → run the printed `receive` command locally.
+- **scp:** `scp root@<pod-ip>:/workspace/locatlization/results/phase1_frozen/best.pt .`
+
 ## 8. Scale up
 - Add shards: `--shards 0 1 2 3 4 5` (all ~277K, ~114 GB).
 - Climb the ladder: `configs/phase2_lora.yaml` → full FT → ensemble (see PLAN.md §5).
@@ -63,4 +73,5 @@ python -m src.eval  --ckpt results/phase1_frozen/best.pt --manifest data/manifes
 - External Nano-Banana test: prep Pico-Banana as a manifest, pass via `--external`.
 
 ## Run order recap
-`check_backbone → download_ntire → prep_ntire → train → eval`
+One shot: `bash runpod_quickstart.sh`  (DINOv3 frozen baseline; pass another config to override).
+Manual: `check_backbone → download_ntire → prep_ntire → train → eval → upload_model`.

@@ -1,0 +1,38 @@
+# FALLBACK config — use this to START NOW while DINOv3 gated access is pending.
+# Same pipeline, same code; only the backbone differs. Swap back to phase1_frozen.yaml
+# (DINOv3) the moment access is granted — your audit/baseline numbers carry over as a strong proxy.
+#
+# DINOv2 is PATCH-14, so image_size MUST be a multiple of 14 (392 = 14*28).  DINOv3 is patch-16.
+run_name: phase1_dinov2
+seed: 0
+
+data:
+  train_manifest: data/manifest_train.csv
+  val_manifest: data/manifest_val.csv
+  image_size: 392            # 14*28  (NOT 512 — that's not a multiple of 14)
+  reencode_jpeg: true
+  jpeg_quality: 90
+
+model:
+  backbone: facebook/dinov2-with-registers-large   # OPEN (no gate); 4 register tokens; hidden 1024
+  pooling: [cls, reg, mean, attn]
+  freeze_backbone: true
+  grad_checkpointing: false
+  lora:
+    enabled: false
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: all-linear
+
+train:
+  epochs: 6
+  batch_size: 96
+  lr_head: 1.0e-3
+  lr_backbone: 1.0e-4
+  weight_decay: 0.05
+  warmup_ratio: 0.05
+  focal_gamma: 2.0
+  focal_alpha: 0.5
+  num_workers: 12
+  amp_dtype: bf16

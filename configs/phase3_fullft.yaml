@@ -1,0 +1,29 @@
+run_name: phase3_fullft
+seed: 0
+
+data:
+  train_manifest: data/manifest_train.csv
+  val_manifest: data/manifest_val.csv
+  image_size: 512
+  reencode_jpeg: true
+  jpeg_quality: 90
+
+model:
+  backbone: facebook/dinov3-vitl16-pretrain-lvd1689m
+  pooling: [cls, reg, mean, attn]
+  freeze_backbone: false       # full end-to-end fine-tune (justified by 20-generator data)
+  grad_checkpointing: true     # needed to fit ViT-L @512 full-FT
+  lora:
+    enabled: false
+
+train:
+  epochs: 4
+  batch_size: 32
+  lr_head: 1.0e-3
+  lr_backbone: 2.0e-5          # small LR for the backbone
+  weight_decay: 0.05
+  warmup_ratio: 0.05
+  focal_gamma: 2.0
+  focal_alpha: 0.5
+  num_workers: 12
+  amp_dtype: bf16

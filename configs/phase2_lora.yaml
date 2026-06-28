@@ -1,0 +1,33 @@
+run_name: phase2_lora
+seed: 0
+
+data:
+  train_manifest: data/manifest_train.csv
+  val_manifest: data/manifest_val.csv
+  image_size: 512
+  reencode_jpeg: true
+  jpeg_quality: 90
+
+model:
+  backbone: facebook/dinov3-vitl16-pretrain-lvd1689m
+  pooling: [cls, reg, mean, attn]
+  freeze_backbone: false       # ignored when LoRA is on; backbone gets LoRA adapters
+  grad_checkpointing: true
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: all-linear
+
+train:
+  epochs: 6
+  batch_size: 64
+  lr_head: 1.0e-3
+  lr_backbone: 1.0e-4          # LoRA adapter LR
+  weight_decay: 0.05
+  warmup_ratio: 0.05
+  focal_gamma: 2.0
+  focal_alpha: 0.5
+  num_workers: 12
+  amp_dtype: bf16

@@ -62,7 +62,8 @@ def main():
                        num_workers=nw, pin_memory=True, persistent_workers=nw > 0)
 
     model = DINOv3Detector(mc["backbone"], pooling=mc.get("pooling", ["cls", "reg", "mean", "attn"]),
-                           freeze_backbone=mc.get("freeze_backbone", True), lora=mc.get("lora")).to(device)
+                           freeze_backbone=mc.get("freeze_backbone", True), lora=mc.get("lora"),
+                           grad_checkpointing=mc.get("grad_checkpointing", False)).to(device)
 
     head_p, bb_p, trainable_names = [], [], set()
     for n, p in model.named_parameters():
@@ -103,7 +104,9 @@ def main():
             # save only trainable tensors (head/attn/LoRA) — frozen backbone reloads from HF
             sd = {k: v for k, v in model.state_dict().items() if k in trainable_names}
             torch.save({"trainable": sd, "cfg": cfg, "auc": auc}, os.path.join(out, "best.pt"))
-    print(f"[done] best val AUC {best:.4f}  ->  {out}/best.pt")
+    last_sd = {k: v for k, v in model.state_dict().items() if k in trainable_names}
+    torch.save({"trainable": last_sd, "cfg": cfg, "auc": auc}, os.path.join(out, "last.pt"))
+    print(f"[done] best val AUC {best:.4f}  ->  {out}/best.pt   (+ last.pt)")
 
 
 if __name__ == "__main__":

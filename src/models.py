@@ -27,12 +27,14 @@ class AttentionPool(nn.Module):
 
 class DINOv3Detector(nn.Module):
     def __init__(self, backbone_name, pooling=("cls", "reg", "mean", "attn"),
-                 freeze_backbone=True, lora=None, head_hidden=256, dropout=0.1):
+                 freeze_backbone=True, lora=None, head_hidden=256, dropout=0.1,
+                 grad_checkpointing=False):
         super().__init__()
         self.backbone = AutoModel.from_pretrained(backbone_name)
         cfg = self.backbone.config
         self.dim = cfg.hidden_size
-        self.num_reg = int(getattr(cfg, "num_register_tokens", 4) or 0)
+        # 4 for DINOv3 / DINOv2-with-registers; 0 for backbones without register tokens
+        self.num_reg = int(getattr(cfg, "num_register_tokens", 0) or 0)
         self.pooling = tuple(pooling)
 
         self.lora_enabled = bool(lora and lora.get("enabled"))
@@ -47,6 +49,14 @@ class DINOv3Detector(nn.Module):
         elif freeze_backbone:
             for p in self.backbone.parameters():
                 p.requires_grad_(False)
+
+        if grad_checkpointing:
+            try:
+                self.backbone.gradient_checkpointing_enable()
+                if hasattr(self.backbone, "enable_input_require_grads"):
+                    self.backbone.enable_input_require_grads()   # needed for LoRA + ckpt
+            except Exception:
+                pass
 
         if "attn" in self.pooling:
             self.attn_pool = AttentionPool(self.dim)
