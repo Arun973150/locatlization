@@ -1,10 +1,10 @@
 """Push a trained checkpoint to a (private) HF model repo so you can download it anywhere.
 
-  huggingface-cli login                       # once
+  hf auth login                               # once
   python -m src.upload_model --ckpt results/phase1_frozen/best.pt --repo <you>/nb-detector
 
 Later, from any machine:
-  huggingface-cli download <you>/nb-detector best.pt --local-dir .
+  hf download <you>/nb-detector best.pt --local-dir .
 """
 import argparse, os
 from huggingface_hub import HfApi, create_repo

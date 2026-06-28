@@ -1,3 +1,4 @@
+
 """Download NTIRE-2026 Robust-AIGen training shards (single-copy, storage-frugal).
 
 Streams the zip straight to the target dir (NO HF cache duplicate), extracts, deletes the
@@ -42,7 +43,7 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     token = get_token()
     if token is None:
-        print("WARN: no HF token (run `huggingface-cli login`; dataset is gated).", file=sys.stderr)
+        print("WARN: no HF token (run `hf auth login`; dataset is gated).", file=sys.stderr)
 
     for i in a.shards:
         fn = f"shard_{i}.zip"

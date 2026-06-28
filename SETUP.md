@@ -21,7 +21,7 @@ export TOKENIZERS_PARALLELISM=false
 
 ## 3. Hugging Face access (two gated things)
 ```bash
-huggingface-cli login                  # paste a token with read access
+hf auth login                          # paste a token with read access
 ```
 - Accept the **DINOv3 license**: https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m
 - Accept terms on the **dataset**: https://huggingface.co/datasets/deepfakesMSU/NTIRE-RobustAIGenDetection-train
@@ -61,7 +61,7 @@ Training auto-saves `results/<run_name>/best.pt` **and** `last.pt` — *trainabl
 frozen/LoRA checkpoints are a few MB (full-FT ~1.2 GB). Get it off the pod with whichever is easiest:
 - **HF Hub (best — pull it anywhere):**
   `python -m src.upload_model --ckpt results/phase1_frozen/best.pt --repo <you>/nb-detector`
-  then later `huggingface-cli download <you>/nb-detector best.pt --local-dir .`
+  then later `hf download <you>/nb-detector best.pt --local-dir .`
 - **JupyterLab:** right-click the `.pt` → Download (fine for small frozen/LoRA ckpts).
 - **runpodctl:** `runpodctl send results/phase1_frozen/best.pt` → run the printed `receive` command locally.
 - **scp:** `scp root@<pod-ip>:/workspace/locatlization/results/phase1_frozen/best.pt .`
