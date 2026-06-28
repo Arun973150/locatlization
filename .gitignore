@@ -1,0 +1,18 @@
+# data & outputs — large/binary, live on RunPod, never commit
+data/
+results/
+hf_cache/
+*.part
+*.zip
+
+# probe artifacts (generated montages/csv)
+probe/out/
+
+# python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# os / editor
+.DS_Store
+Thumbs.db

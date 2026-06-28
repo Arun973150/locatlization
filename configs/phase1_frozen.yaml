@@ -1,0 +1,32 @@
+run_name: phase1_frozen
+seed: 0
+
+data:
+  train_manifest: data/manifest_train.csv
+  val_manifest: data/manifest_val.csv
+  image_size: 256            # /16; bump to 512 for the main run
+  reencode_jpeg: true        # shortcut-control normalization ON. Set false + retrain for the AUDIT.
+  jpeg_quality: 90
+
+model:
+  backbone: facebook/dinov3-vitl16-pretrain-lvd1689m
+  pooling: [cls, reg, mean, attn]
+  freeze_backbone: true
+  lora:
+    enabled: false           # phase2: set true (and freeze_backbone has no effect then)
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: all-linear
+
+train:
+  epochs: 6
+  batch_size: 128            # frozen head @256px fits easily on A100; drop to ~32 for LoRA@512
+  lr_head: 1.0e-3
+  lr_backbone: 1.0e-4        # used only when backbone params are trainable (LoRA/full-FT)
+  weight_decay: 0.05
+  warmup_ratio: 0.05
+  focal_gamma: 2.0
+  focal_alpha: 0.5
+  num_workers: 8
+  amp_dtype: bf16
