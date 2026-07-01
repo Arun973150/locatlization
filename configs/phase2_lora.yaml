@@ -22,7 +22,7 @@ model:
 
 train:
   epochs: 6
-  batch_size: 128              # ~50-60GB with SDPA attention; if it OOMs at step 0, drop to 96 or 64
+  batch_size: 96               # ~56GB on A100-80GB @512 no-ckpt; drop to 64 if OOM
   lr_head: 1.0e-3
   lr_backbone: 1.0e-4          # LoRA adapter LR
   weight_decay: 0.05
