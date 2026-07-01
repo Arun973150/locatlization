@@ -2,6 +2,7 @@
 # (use a RunPod template with PyTorch 2.4+ / CUDA 12.x).
 transformers>=4.56.0        # DINOv3 support; if AutoModel fails: pip install -U git+https://github.com/huggingface/transformers
 huggingface_hub>=0.25.0
+datasets>=2.14.0
 requests>=2.31.0
 peft>=0.13.0
 pillow>=10.0.0
