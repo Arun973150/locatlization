@@ -96,6 +96,8 @@ def main():
             opt.zero_grad(set_to_none=True)
             loss.backward(); opt.step(); sch.step()
             tot += loss.item(); nb += 1
+            if nb % 50 == 0:
+                print(f"  ep{ep} step {nb}/{len(tr_dl)}  loss {tot/nb:.4f}", flush=True)
         auc = eval_auc(model, va_dl, device, dtype)
         lw.writerow([ep, tot / max(nb, 1), auc]); logf.flush()
         print(f"epoch {ep}  loss {tot/max(nb,1):.4f}  val_auc {auc:.4f}", flush=True)
