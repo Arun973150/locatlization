@@ -72,6 +72,12 @@ frozen/LoRA checkpoints are a few MB (full-FT ~1.2 GB). Get it off the pod with 
 - Official score = submit test predictions to **Codabench comp 12761** (Clean + Robust AUC).
 - External Nano-Banana test: prep Pico-Banana as a manifest, pass via `--external`.
 
+## Restart / persistence
+Stopping a pod (or a RunPod migration) rebuilds the container but keeps the **network volume**.
+Safe on `/workspace`: repo, `data/`, `HF_HOME` model cache, `results/` checkpoints. Lost: pip deps,
+env vars, tmux. After every restart run **`bash runpod_resume.sh`** (reinstalls deps, restores HF auth,
+shows what survived). You never re-download the shard or the model.
+
 ## Run order recap
 One shot: `bash runpod_quickstart.sh`  (DINOv3 frozen baseline; pass another config to override).
 Manual: `check_backbone → download_ntire → prep_ntire → train → eval → upload_model`.
