@@ -32,31 +32,36 @@ def jpeg_reencode(bgr, q):
     return cv2.imdecode(enc, cv2.IMREAD_COLOR) if ok else bgr
 
 
-# --- degradation ops (mirror the NTIRE robust regime) ---
+# --- degradation ops (harder than NTIRE default: forces reliance on real artifacts) ---
 def _deg_jpeg(b):
-    return jpeg_reencode(b, random.randint(30, 95))
+    return jpeg_reencode(b, random.randint(20, 90))
 
 
 def _deg_resize(b):
     h, w = b.shape[:2]
-    f = random.uniform(0.5, 1.0)
+    f = random.uniform(0.3, 1.0)                     # down to 0.3x -> stronger detail loss
     s = cv2.resize(b, (max(1, int(w * f)), max(1, int(h * f))), interpolation=cv2.INTER_AREA)
     return cv2.resize(s, (w, h), interpolation=cv2.INTER_LINEAR)
 
 
 def _deg_blur(b):
-    k = random.choice([3, 5])
+    k = random.choice([3, 5, 7])
     return cv2.GaussianBlur(b, (k, k), 0)
 
 
 def _deg_noise(b):
-    sigma = random.uniform(2, 12)
+    sigma = random.uniform(2, 20)
     out = b.astype(np.float32) + np.random.randn(*b.shape) * sigma
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-DEG_OPS = [_deg_jpeg, _deg_resize, _deg_blur, _deg_noise]
-SEVERITY = {"clean": 0, "mild": 1, "moderate": 2, "heavy": 3}
+def _deg_webp(b):
+    ok, enc = cv2.imencode(".webp", b, [cv2.IMWRITE_WEBP_QUALITY, random.randint(30, 90)])
+    return cv2.imdecode(enc, cv2.IMREAD_COLOR) if ok else b
+
+
+DEG_OPS = [_deg_jpeg, _deg_resize, _deg_blur, _deg_noise, _deg_webp]
+SEVERITY = {"clean": 0, "mild": 1, "moderate": 2, "heavy": 4}
 
 
 def apply_degradation(bgr, n_ops):
@@ -69,7 +74,7 @@ class DetectionTransform:
     """train=True -> random-severity aug; fixed_severity set -> deterministic robust eval."""
 
     def __init__(self, size=256, train=False, reencode_jpeg=True, jpeg_quality=90,
-                 severity_weights=(0.4, 0.3, 0.2, 0.1), fixed_severity=None,
+                 severity_weights=(0.25, 0.3, 0.25, 0.2), fixed_severity=None,
                  mean=IMAGENET_MEAN, std=IMAGENET_STD):
         self.size = size
         self.train = train

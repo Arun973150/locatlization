@@ -1,0 +1,35 @@
+# Mixed-domain LoRA: NTIRE generations + Pico-Banana edits (+ more sources later).
+# Fixes the edit blind spot. Uses the mixed manifests from build_mixed.py.
+run_name: phase2_lora_mixed
+seed: 0
+
+data:
+  train_manifest: data/manifest_mixed_train.csv
+  val_manifest: data/manifest_mixed_val.csv
+  image_size: 512
+  reencode_jpeg: true          # equalizes per-source format so it can't shortcut on dataset origin
+  jpeg_quality: 90
+
+model:
+  backbone: facebook/dinov3-vitl16-pretrain-lvd1689m
+  pooling: [cls, reg, mean, attn]
+  freeze_backbone: false
+  grad_checkpointing: true     # required at 512px (see phase2_lora)
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: all-linear
+
+train:
+  epochs: 6
+  batch_size: 96
+  lr_head: 1.0e-3
+  lr_backbone: 1.0e-4
+  weight_decay: 0.05
+  warmup_ratio: 0.05
+  focal_gamma: 2.0
+  focal_alpha: 0.5
+  num_workers: 12
+  amp_dtype: bf16
