@@ -56,7 +56,13 @@ def main():
         stream_to_file(RESOLVE.format(repo=a.repo, fn=fn), zp, token)
         print(f"[unzip] -> {dest}")
         with zipfile.ZipFile(zp) as z:
-            z.extractall(dest)
+            members = z.infolist()
+            total = len(members)
+            for k, m in enumerate(members, 1):
+                z.extract(m, dest)
+                if k % 2000 == 0 or k == total:
+                    print(f"\r  extracting {k}/{total} files", end="", flush=True)
+            print()
         os.remove(zp)                       # free ~20 GB immediately
         print(f"[ok] {dest} (zip removed)")
     print("[done] shards:", a.shards)
