@@ -12,7 +12,7 @@ model:
   backbone: facebook/dinov3-vitl16-pretrain-lvd1689m
   pooling: [cls, reg, mean, attn]
   freeze_backbone: false       # ignored when LoRA is on; backbone gets LoRA adapters
-  grad_checkpointing: false    # 80GB has room -> skip recompute for ~25-30% faster epochs
+  grad_checkpointing: true     # REQUIRED at 512px: attention activations OOM without it, even at batch 96
   lora:
     enabled: true
     r: 16
