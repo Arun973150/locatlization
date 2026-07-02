@@ -27,8 +27,13 @@ def load_clean(path):
 
 def cap_df(df, cap, seed):
     if cap and len(df) > cap:                       # keep classes balanced within the cap
-        df = df.groupby("label", group_keys=False).apply(
-            lambda g: g.sample(min(len(g), cap // 2), random_state=seed))
+        per = cap // 2
+        # iterate groups (keeps the 'label' column) instead of groupby.apply,
+        # which drops the grouping column in newer pandas -> would NaN the labels
+        df = pd.concat(
+            [g.sample(min(len(g), per), random_state=seed) for _, g in df.groupby("label")],
+            ignore_index=True,
+        )
     return df
 
 
