@@ -3,18 +3,13 @@
 positives = Nano-Banana edited images (label 1); negatives = their authentic OpenImages
 originals (label 0). Resized to --size on download (JPEG) so the footprint stays small.
 
-Beats the CDN rate-limit two ways:
-  * --delay throttles each request (stay under the burst limit),
-  * --skip resumes deeper in the stream so repeat passes ADD new pairs.
-Files are named by global record index, and the manifest is rebuilt from ALL pairs on disk
-every run -> passes accumulate. Split by PAIR so an edit + its original never straddle train/val.
+Robustness/scale:
+  * the 178MB record file (sft.jsonl) is downloaded ONCE to data/ and read locally
+    (no fragile live streaming -> no ChunkedEncodingError; --skip becomes instant),
+  * --delay throttles each request (stay under the CDN burst limit),
+  * --skip resumes deeper so repeat passes ADD new pairs; manifest rebuilt from ALL on-disk pairs.
 
-  # one throttled run:
   python -m src.prep_picobanana --n 20000 --delay 0.1 --workers 8
-  # or accumulate in passes if it still caps:
-  python -m src.prep_picobanana --skip 0     --n 8000 --delay 0.1
-  python -m src.prep_picobanana --skip 30000 --n 8000 --delay 0.1
-  python -m src.prep_picobanana --skip 60000 --n 8000 --delay 0.1
 """
 import argparse, os, csv, json, random, time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
@@ -25,6 +20,29 @@ import requests
 JSONL = "https://ml-site.cdn-apple.com/datasets/pico-banana-300k/nb/jsonl/sft.jsonl"
 EDIT_BASE = "https://ml-site.cdn-apple.com/datasets/pico-banana-300k/nb/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (research)"}
+
+
+def get_jsonl_path(out_dir, retries=4):
+    """Download sft.jsonl once to disk (resumable across attempts); return local path."""
+    local = os.path.join(out_dir, "sft.jsonl")
+    if os.path.exists(local) and os.path.getsize(local) > 150_000_000:
+        return local
+    tmp = local + ".part"
+    for attempt in range(1, retries + 1):
+        try:
+            print(f"[jsonl] downloading metadata (~178MB), attempt {attempt}...", flush=True)
+            with requests.get(JSONL, stream=True, timeout=(5, 120)) as r:
+                r.raise_for_status()
+                with open(tmp, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1 << 20):
+                        f.write(chunk)
+            os.replace(tmp, local)
+            print(f"[jsonl] cached -> {local}", flush=True)
+            return local
+        except Exception as e:
+            print(f"[jsonl] attempt {attempt} failed: {e}", flush=True)
+            time.sleep(3)
+    raise RuntimeError("could not download sft.jsonl after retries")
 
 
 def fetch_resized(url, path, size, q, timeout=(5, 30)):
@@ -43,7 +61,7 @@ def fetch_resized(url, path, size, q, timeout=(5, 30)):
 def dl_pair(task):
     idx, o, pos_dir, neg_dir, size, q, delay = task
     if delay:
-        time.sleep(delay)                       # throttle to stay under the CDN burst limit
+        time.sleep(delay)
     ep = os.path.join(pos_dir, f"{idx:06d}.jpg")
     npth = os.path.join(neg_dir, f"{idx:06d}.jpg")
     try:
@@ -77,23 +95,18 @@ def main():
     os.makedirs(pos_dir, exist_ok=True)
     os.makedirs(neg_dir, exist_ok=True)
 
-    r = requests.get(JSONL, stream=True, timeout=60)
-    lines = r.iter_lines(decode_unicode=True)
-    if a.skip:                                  # advance past skipped records
-        c = 0
-        for line in lines:
-            if line:
-                c += 1
-                if c >= a.skip:
-                    break
+    fh = open(get_jsonl_path(a.out_dir), "r", encoding="utf-8")
+    for _ in range(a.skip):                     # instant skip in a local file
+        fh.readline()
     idx = a.skip
 
     def next_task():
         nonlocal idx
-        for line in lines:
-            if not line:
+        for raw in fh:
+            raw = raw.strip()
+            if not raw:
                 continue
-            t = (idx, json.loads(line), pos_dir, neg_dir, a.size, a.quality, a.delay)
+            t = (idx, json.loads(raw), pos_dir, neg_dir, a.size, a.quality, a.delay)
             idx += 1
             return t
         return None
@@ -121,7 +134,7 @@ def main():
                     inflight.add(ex.submit(dl_pair, t))
         for f in inflight:
             f.cancel()
-    r.close()
+    fh.close()
 
     # rebuild manifest from ALL pairs on disk (so passes accumulate)
     common = sorted(set(os.listdir(pos_dir)) & set(os.listdir(neg_dir)))
