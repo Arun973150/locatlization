@@ -24,7 +24,8 @@ EDIT_BASE = "https://ml-site.cdn-apple.com/datasets/pico-banana-300k/nb/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (research)"}
 
 
-def fetch_resized(url, path, size, q, timeout=60):
+def fetch_resized(url, path, size, q, timeout=(5, 15)):
+    # (connect, read) timeouts -> hanging/dead Flickr links fail fast instead of blocking a worker
     r = requests.get(url, headers=HEADERS, timeout=timeout)
     r.raise_for_status()
     img = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR)
