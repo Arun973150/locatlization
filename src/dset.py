@@ -8,6 +8,10 @@ class ManifestDataset(Dataset):
     def __init__(self, manifest_csv, transform):
         self.df = pd.read_csv(manifest_csv)
         assert {"path", "label"}.issubset(self.df.columns), "manifest needs path,label"
+        # coerce labels to int, drop any bad/missing-label rows
+        self.df["label"] = pd.to_numeric(self.df["label"], errors="coerce")
+        self.df = self.df.dropna(subset=["path", "label"]).reset_index(drop=True)
+        self.df["label"] = self.df["label"].astype(int)
         self.t = transform
 
     def __len__(self):
