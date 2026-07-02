@@ -2,19 +2,14 @@
 
 positives = Nano-Banana edited images (label 1); negatives = their authentic OpenImages
 originals (label 0). Images are RESIZED to --size on download (JPEG) so the footprint stays
-small: ~30K images @512px ≈ ~3 GB. Downloads are PARALLEL (network-bound) so 15K pairs take
-minutes, not hours. Splits by PAIR (source image) so an edit and its original never straddle
-train/val.
+small (~2 imgs/pair * ~100KB). Downloads run in a bounded thread pool that STREAMS records
+until it collects --n successful pairs (so a low success rate just means it scans deeper,
+instead of running out). Splits by PAIR so an edit and its original never straddle train/val.
 
-  # small held-out test only:
-  python -m src.prep_picobanana --n 500 --val-frac 1.0
-  # training set (+ 10% held-out val), resized, parallel:
-  python -m src.prep_picobanana --n 15000 --val-frac 0.1
-
-Writes: manifest_pico_train.csv, manifest_pico_val.csv (path,label) under --out-dir.
+  python -m src.prep_picobanana --n 8000 --val-frac 0.1
 """
 import argparse, os, csv, json, random
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 import numpy as np
 import cv2
 import requests
@@ -24,8 +19,8 @@ EDIT_BASE = "https://ml-site.cdn-apple.com/datasets/pico-banana-300k/nb/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (research)"}
 
 
-def fetch_resized(url, path, size, q, timeout=(5, 15)):
-    # (connect, read) timeouts -> hanging/dead Flickr links fail fast instead of blocking a worker
+def fetch_resized(url, path, size, q, timeout=(5, 30)):
+    # (connect, read): dead hosts fail fast at connect; large images get up to 30s to read
     r = requests.get(url, headers=HEADERS, timeout=timeout)
     r.raise_for_status()
     img = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR)
@@ -57,13 +52,12 @@ def dl_pair(task):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n", type=int, default=500, help="number of edit/original PAIRS to keep")
+    ap.add_argument("--n", type=int, default=8000, help="number of edit/original PAIRS to keep")
     ap.add_argument("--out-dir", default="data")
     ap.add_argument("--size", type=int, default=512)
     ap.add_argument("--quality", type=int, default=92)
-    ap.add_argument("--val-frac", type=float, default=1.0,
-                    help="fraction of pairs -> val (1.0 = pure test set; 0.1 = mostly train)")
-    ap.add_argument("--workers", type=int, default=24)
+    ap.add_argument("--val-frac", type=float, default=0.1)
+    ap.add_argument("--workers", type=int, default=16, help="fewer = less CDN throttling")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
 
@@ -72,50 +66,60 @@ def main():
     os.makedirs(pos_dir, exist_ok=True)
     os.makedirs(neg_dir, exist_ok=True)
 
-    # read ~2x candidate records to survive ~40% dead Flickr links
-    tasks, need = [], a.n * 2 + 100
     r = requests.get(JSONL, stream=True, timeout=60)
-    for i, line in enumerate(r.iter_lines(decode_unicode=True)):
-        if not line:
-            continue
-        tasks.append((i, json.loads(line), pos_dir, neg_dir, a.size, a.quality))
-        if len(tasks) >= need:
-            break
-    r.close()
+    lines = r.iter_lines(decode_unicode=True)
+    idx = 0
 
-    pairs = []
+    def next_task():
+        nonlocal idx
+        for line in lines:
+            if not line:
+                continue
+            t = (idx, json.loads(line), pos_dir, neg_dir, a.size, a.quality)
+            idx += 1
+            return t
+        return None
+
+    pairs, last_print = [], 0
     with ThreadPoolExecutor(max_workers=a.workers) as ex:
-        futs = [ex.submit(dl_pair, t) for t in tasks]
-        for f in as_completed(futs):
-            res = f.result()
-            if res:
-                pairs.append(res)
-                if len(pairs) % 200 == 0:
-                    print(f"  {len(pairs)}/{a.n} pairs", flush=True)
-            if len(pairs) >= a.n:
+        inflight = set()
+        for _ in range(a.workers * 3):                 # prime the pool
+            t = next_task()
+            if t is None:
                 break
-        for f in futs:
+            inflight.add(ex.submit(dl_pair, t))
+        while inflight and len(pairs) < a.n:
+            done, inflight = wait(inflight, return_when=FIRST_COMPLETED)
+            for f in done:
+                res = f.result()
+                if res:
+                    pairs.append(res)
+                    if len(pairs) - last_print >= 200:
+                        last_print = len(pairs)
+                        print(f"  {len(pairs)}/{a.n} pairs (scanned {idx})", flush=True)
+                if len(pairs) >= a.n:
+                    break
+                t = next_task()                        # keep the pool full from the stream
+                if t is not None:
+                    inflight.add(ex.submit(dl_pair, t))
+        for f in inflight:
             f.cancel()
+    r.close()
     pairs = pairs[:a.n]
 
     random.Random(a.seed).shuffle(pairs)
     n_val = int(round(len(pairs) * a.val_frac))
-    val_pairs, train_pairs = pairs[:n_val], pairs[n_val:]
-
-    def write(split, plist):
+    for split, pl in [("train", pairs[n_val:]), ("val", pairs[:n_val])]:
         rows = []
-        for ep, npth in plist:
+        for ep, npth in pl:
             rows += [(ep, 1), (npth, 0)]
-        path = os.path.join(a.out_dir, f"manifest_pico_{split}.csv")
-        with open(path, "w", newline="") as f:
+        p = os.path.join(a.out_dir, f"manifest_pico_{split}.csv")
+        with open(p, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["path", "label"])
             w.writerows(rows)
-        print(f"  {split}: {len(rows)} images -> {path}")
-
-    write("train", train_pairs)
-    write("val", val_pairs)
-    print(f"done: {len(pairs)} pairs ({len(train_pairs)} train / {len(val_pairs)} val)")
+        print(f"  {split}: {len(rows)} images -> {p}")
+    print(f"done: {len(pairs)} pairs (scanned {idx} records)")
 
 
 if __name__ == "__main__":
