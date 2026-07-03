@@ -7,9 +7,11 @@ Robustness/scale:
   * the 178MB record file (sft.jsonl) is downloaded ONCE to data/ and read locally
     (no fragile live streaming -> no ChunkedEncodingError; --skip becomes instant),
   * --delay throttles each request (stay under the CDN burst limit),
-  * --skip resumes deeper so repeat passes ADD new pairs; manifest rebuilt from ALL on-disk pairs.
+  * --skip resumes deeper so repeat passes ADD new pairs; manifest rebuilt from ALL on-disk pairs,
+  * fetch_resized retries up to 3x with exponential backoff and 429/Retry-After support,
+  * 300 consecutive failures triggers a clean abort with a --skip resume hint.
 
-  python -m src.prep_picobanana --n 20000 --delay 0.1 --workers 8
+  python -m src.prep_picobanana --n 20000 --delay 0.5 --workers 4
 """
 import argparse, os, csv, json, random, time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
@@ -46,16 +48,26 @@ def get_jsonl_path(out_dir, retries=4):
 
 
 def fetch_resized(url, path, size, q, timeout=(5, 30)):
-    r = requests.get(url, headers=HEADERS, timeout=timeout)
-    r.raise_for_status()
-    img = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError("decode failed")
-    h, w = img.shape[:2]
-    if min(h, w) > size:
-        s = size / min(h, w)
-        img = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
-    cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, q])
+    for attempt in range(1, 4):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=timeout)
+            if r.status_code == 429:
+                time.sleep(float(r.headers.get("Retry-After", 0.5 * attempt)))
+                continue
+            r.raise_for_status()
+            img = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR)
+            if img is None:
+                raise ValueError("decode failed")
+            h, w = img.shape[:2]
+            if min(h, w) > size:
+                s = size / min(h, w)
+                img = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
+            cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, q])
+            return
+        except Exception:
+            if attempt < 3:
+                time.sleep(0.5 * attempt)
+    raise RuntimeError(f"fetch failed after 3 attempts: {url}")
 
 
 def dl_pair(task):
@@ -81,8 +93,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=8000, help="pairs to collect THIS run")
     ap.add_argument("--skip", type=int, default=0, help="skip first N records (resume/accumulate)")
-    ap.add_argument("--delay", type=float, default=0.1, help="seconds sleep per pair (throttle)")
-    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--delay", type=float, default=0.5, help="seconds sleep per pair (throttle)")
+    ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out-dir", default="data")
     ap.add_argument("--size", type=int, default=512)
     ap.add_argument("--quality", type=int, default=92)
@@ -112,6 +124,9 @@ def main():
         return None
 
     got, last = 0, 0
+    fails, streak = 0, 0
+    aborted = False
+
     with ThreadPoolExecutor(max_workers=a.workers) as ex:
         inflight = set()
         for _ in range(a.workers * 3):
@@ -119,15 +134,33 @@ def main():
             if t is None:
                 break
             inflight.add(ex.submit(dl_pair, t))
-        while inflight and got < a.n:
+        while inflight and got < a.n and not aborted:
             done, inflight = wait(inflight, return_when=FIRST_COMPLETED)
             for f in done:
-                if f.result():
+                result = f.result()
+                if result:
                     got += 1
+                    streak = 0
                     if got - last >= 200:
                         last = got
-                        print(f"  {got}/{a.n} this run (scanned to {idx})", flush=True)
-                if got >= a.n:
+                        print(f"  {got}/{a.n} this run  (scanned {idx}, fails {fails})", flush=True)
+                else:
+                    fails += 1
+                    streak += 1
+                    if fails % 100 == 0:
+                        print(
+                            f"  [warn] {fails} total failures, {streak} consecutive (scanned {idx})",
+                            flush=True,
+                        )
+                    if streak >= 300:
+                        print(
+                            f"  [abort] {streak} consecutive failures — CDN is likely rate-limiting.\n"
+                            f"  Resume later with:  --skip {idx}",
+                            flush=True,
+                        )
+                        aborted = True
+                        break
+                if got >= a.n or aborted:
                     break
                 t = next_task()
                 if t is not None:
