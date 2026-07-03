@@ -14,6 +14,7 @@ Robustness/scale:
   python -m src.prep_picobanana --n 20000 --delay 0.5 --workers 4
 """
 import argparse, os, csv, json, random, time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 import numpy as np
 import cv2
@@ -48,10 +49,12 @@ def get_jsonl_path(out_dir, retries=4):
 
 
 def fetch_resized(url, path, size, q, timeout=(5, 30)):
+    last_exc = None
     for attempt in range(1, 4):
         try:
             r = requests.get(url, headers=HEADERS, timeout=timeout)
             if r.status_code == 429:
+                last_exc = requests.exceptions.HTTPError(response=r)
                 time.sleep(float(r.headers.get("Retry-After", 0.5 * attempt)))
                 continue
             r.raise_for_status()
@@ -64,10 +67,24 @@ def fetch_resized(url, path, size, q, timeout=(5, 30)):
                 img = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
             cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, q])
             return
-        except Exception:
+        except Exception as e:
+            last_exc = e
             if attempt < 3:
                 time.sleep(0.5 * attempt)
-    raise RuntimeError(f"fetch failed after 3 attempts: {url}")
+    raise last_exc
+
+
+def _classify_error(exc):
+    if isinstance(exc, requests.exceptions.HTTPError):
+        code = exc.response.status_code if exc.response is not None else 0
+        return f"http_{code}"
+    if isinstance(exc, requests.exceptions.Timeout):
+        return "timeout"
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return "connection_error"
+    if isinstance(exc, ValueError) and "decode" in str(exc):
+        return "decode_error"
+    return "other"
 
 
 def dl_pair(task):
@@ -79,14 +96,14 @@ def dl_pair(task):
     try:
         fetch_resized(EDIT_BASE + o["output_image"], ep, size, q)
         fetch_resized(o["open_image_input_url"], npth, size, q)
-        return (ep, npth)
-    except Exception:
+        return (True, None)
+    except Exception as e:
         for p in (ep, npth):
             try:
                 os.remove(p)
             except OSError:
                 pass
-        return None
+        return (False, _classify_error(e))
 
 
 def main():
@@ -125,7 +142,11 @@ def main():
 
     got, last = 0, 0
     fails, streak = 0, 0
+    fail_types: Counter = Counter()
     aborted = False
+
+    def _fmt_types() -> str:
+        return ", ".join(f"{k}: {v}" for k, v in sorted(fail_types.items()))
 
     with ThreadPoolExecutor(max_workers=a.workers) as ex:
         inflight = set()
@@ -137,8 +158,8 @@ def main():
         while inflight and got < a.n and not aborted:
             done, inflight = wait(inflight, return_when=FIRST_COMPLETED)
             for f in done:
-                result = f.result()
-                if result:
+                ok, err_type = f.result()
+                if ok:
                     got += 1
                     streak = 0
                     if got - last >= 200:
@@ -147,14 +168,17 @@ def main():
                 else:
                     fails += 1
                     streak += 1
+                    fail_types[err_type] += 1
                     if fails % 100 == 0:
                         print(
-                            f"  [warn] {fails} total failures, {streak} consecutive (scanned {idx})",
+                            f"  [warn] {fails} total failures, {streak} consecutive"
+                            f"  [{_fmt_types()}]  (scanned {idx})",
                             flush=True,
                         )
                     if streak >= 300:
                         print(
                             f"  [abort] {streak} consecutive failures — CDN is likely rate-limiting.\n"
+                            f"  Breakdown: {_fmt_types()}\n"
                             f"  Resume later with:  --skip {idx}",
                             flush=True,
                         )
