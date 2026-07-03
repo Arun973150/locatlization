@@ -88,17 +88,22 @@ def _classify_error(exc):
 
 
 def dl_pair(task):
-    idx, o, pos_dir, neg_dir, size, q, delay = task
+    idx, o, pos_dir, neg_dir, size, q, delay, only = task
     if delay:
         time.sleep(delay)
     ep = os.path.join(pos_dir, f"{idx:06d}.jpg")
     npth = os.path.join(neg_dir, f"{idx:06d}.jpg")
+    fetch_edited = only != "original"
+    fetch_original = only != "edited"
+    targets = ([ep] if fetch_edited else []) + ([npth] if fetch_original else [])
     try:
-        fetch_resized(EDIT_BASE + o["output_image"], ep, size, q)
-        fetch_resized(o["open_image_input_url"], npth, size, q)
+        if fetch_edited:
+            fetch_resized(EDIT_BASE + o["output_image"], ep, size, q)
+        if fetch_original:
+            fetch_resized(o["open_image_input_url"], npth, size, q)
         return (True, None)
     except Exception as e:
-        for p in (ep, npth):
+        for p in targets:
             try:
                 os.remove(p)
             except OSError:
@@ -108,9 +113,12 @@ def dl_pair(task):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n", type=int, default=8000, help="pairs to collect THIS run")
+    ap.add_argument("--n", type=int, default=8000, help="images to collect THIS run")
     ap.add_argument("--skip", type=int, default=0, help="skip first N records (resume/accumulate)")
-    ap.add_argument("--delay", type=float, default=0.5, help="seconds sleep per pair (throttle)")
+    ap.add_argument("--only", choices=["edited", "original"], default=None,
+                    help="download only edited (Apple CDN) or only original (Open Images); "
+                         "default downloads both as a pair")
+    ap.add_argument("--delay", type=float, default=0.5, help="seconds sleep per request (throttle)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out-dir", default="data")
     ap.add_argument("--size", type=int, default=512)
@@ -135,7 +143,7 @@ def main():
             raw = raw.strip()
             if not raw:
                 continue
-            t = (idx, json.loads(raw), pos_dir, neg_dir, a.size, a.quality, a.delay)
+            t = (idx, json.loads(raw), pos_dir, neg_dir, a.size, a.quality, a.delay, a.only)
             idx += 1
             return t
         return None
