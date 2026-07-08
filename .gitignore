@@ -16,3 +16,7 @@ __pycache__/
 # os / editor
 .DS_Store
 Thumbs.db
+
+# test images (not part of the repo)
+*.jpg
+*.jpeg
