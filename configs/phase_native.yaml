@@ -1,0 +1,36 @@
+# Resolution-preserving run: native-res 512 crops (keep high-freq artifacts) + MILD aug + no re-encode.
+# Requires data stored at HIGHER res (prep with --size 1024) so crops have real detail.
+run_name: phase_native
+seed: 0
+
+data:
+  train_manifest: data/manifest_mixed_train.csv
+  val_manifest: data/manifest_mixed_val.csv
+  image_size: 512
+  crop_native: true          # <- the key change: crop at native res instead of downscaling
+  reencode_jpeg: false       # <- don't add extra compression loss (user's insight)
+  jpeg_quality: 95
+
+model:
+  backbone: facebook/dinov3-vitl16-pretrain-lvd1689m
+  pooling: [cls, reg, mean, attn]
+  freeze_backbone: false
+  grad_checkpointing: true
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: all-linear
+
+train:
+  epochs: 4
+  batch_size: 96
+  lr_head: 1.0e-3
+  lr_backbone: 1.0e-4
+  weight_decay: 0.05
+  warmup_ratio: 0.05
+  focal_gamma: 2.0
+  focal_alpha: 0.5
+  num_workers: 12
+  amp_dtype: bf16

@@ -51,7 +51,7 @@ def main():
 
     dc, tc, mc = cfg["data"], cfg["train"], cfg["model"]
     common = dict(size=dc["image_size"], reencode_jpeg=dc.get("reencode_jpeg", True),
-                  jpeg_quality=dc.get("jpeg_quality", 90))
+                  jpeg_quality=dc.get("jpeg_quality", 90), crop=dc.get("crop_native", False))
     tr_ds = ManifestDataset(dc["train_manifest"], DetectionTransform(train=True, **common))
     va_ds = ManifestDataset(dc["val_manifest"], DetectionTransform(train=False, **common))
 

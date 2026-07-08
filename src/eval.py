@@ -49,7 +49,7 @@ def main():
     model.to(device).eval()
 
     common = dict(size=dc["image_size"], reencode_jpeg=dc.get("reencode_jpeg", True),
-                  jpeg_quality=dc.get("jpeg_quality", 90))
+                  jpeg_quality=dc.get("jpeg_quality", 90), crop=dc.get("crop_native", False))
     clean = DetectionTransform(train=False, **common)
 
     print(f"CLEAN              AUC {score(model, a.manifest, clean, bs, device, dtype):.4f}")

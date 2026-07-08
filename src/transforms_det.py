@@ -1,5 +1,9 @@
-"""Image transforms: multi-stage degradation (train + robust eval) and the
-shortcut-control normalization (canonical resize + optional JPEG re-encode).
+"""Image transforms for AI-image detection.
+
+KEY: to preserve the high-frequency generative fingerprint, we can crop a 512x512 patch at
+NATIVE resolution (crop=True) instead of downscaling the whole image to 512 (which destroys
+the artifact). Augmentation is deliberately MILD (realistic laundering) — heavy compression
+would wipe out the very signal we detect.
 
 PIL.Image -> normalized CHW float tensor.
 """
@@ -18,7 +22,7 @@ def _to_bgr(pil):
 
 
 def canonical_resize(bgr, size):
-    """Resize short side to `size` (area), center-crop size x size. size must be /16."""
+    """Resize short side to `size` (area), center-crop size x size. Downscales -> loses artifacts."""
     h, w = bgr.shape[:2]
     s = size / min(h, w)
     nh, nw = max(size, round(h * s)), max(size, round(w * s))
@@ -27,41 +31,54 @@ def canonical_resize(bgr, size):
     return bgr[y:y + size, x:x + size]
 
 
+def crop_native(bgr, size, center=False):
+    """Crop a size x size patch at NATIVE resolution (preserves high-freq artifacts).
+    Only upsizes when the image is smaller than `size`."""
+    h, w = bgr.shape[:2]
+    if min(h, w) < size:
+        s = size / min(h, w)
+        bgr = cv2.resize(bgr, (max(size, round(w * s)), max(size, round(h * s))),
+                         interpolation=cv2.INTER_CUBIC)
+        h, w = bgr.shape[:2]
+    y = (h - size) // 2 if center else random.randint(0, h - size)
+    x = (w - size) // 2 if center else random.randint(0, w - size)
+    return bgr[y:y + size, x:x + size]
+
+
 def jpeg_reencode(bgr, q):
     ok, enc = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, int(q)])
     return cv2.imdecode(enc, cv2.IMREAD_COLOR) if ok else bgr
 
 
-# --- degradation ops (harder than NTIRE default: forces reliance on real artifacts) ---
+# --- MILD degradation ops (realistic laundering; NOT artifact-destroying) ---
 def _deg_jpeg(b):
-    return jpeg_reencode(b, random.randint(20, 90))
+    return jpeg_reencode(b, random.randint(55, 95))
 
 
 def _deg_resize(b):
     h, w = b.shape[:2]
-    f = random.uniform(0.3, 1.0)                     # down to 0.3x -> stronger detail loss
+    f = random.uniform(0.65, 1.0)
     s = cv2.resize(b, (max(1, int(w * f)), max(1, int(h * f))), interpolation=cv2.INTER_AREA)
     return cv2.resize(s, (w, h), interpolation=cv2.INTER_LINEAR)
 
 
 def _deg_blur(b):
-    k = random.choice([3, 5, 7])
-    return cv2.GaussianBlur(b, (k, k), 0)
+    return cv2.GaussianBlur(b, (3, 3), 0)
 
 
 def _deg_noise(b):
-    sigma = random.uniform(2, 20)
+    sigma = random.uniform(2, 8)
     out = b.astype(np.float32) + np.random.randn(*b.shape) * sigma
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def _deg_webp(b):
-    ok, enc = cv2.imencode(".webp", b, [cv2.IMWRITE_WEBP_QUALITY, random.randint(30, 90)])
+    ok, enc = cv2.imencode(".webp", b, [cv2.IMWRITE_WEBP_QUALITY, random.randint(60, 95)])
     return cv2.imdecode(enc, cv2.IMREAD_COLOR) if ok else b
 
 
 DEG_OPS = [_deg_jpeg, _deg_resize, _deg_blur, _deg_noise, _deg_webp]
-SEVERITY = {"clean": 0, "mild": 1, "moderate": 2, "heavy": 4}
+SEVERITY = {"clean": 0, "mild": 1, "moderate": 2, "heavy": 3}
 
 
 def apply_degradation(bgr, n_ops):
@@ -71,15 +88,17 @@ def apply_degradation(bgr, n_ops):
 
 
 class DetectionTransform:
-    """train=True -> random-severity aug; fixed_severity set -> deterministic robust eval."""
+    """crop=True -> native-resolution random(train)/center(eval) 512 crop (preserves artifacts).
+    crop=False -> downscale short side to 512 + center-crop (loses high-freq detail)."""
 
-    def __init__(self, size=256, train=False, reencode_jpeg=True, jpeg_quality=90,
-                 severity_weights=(0.1, 0.3, 0.35, 0.25), fixed_severity=None,
+    def __init__(self, size=512, train=False, reencode_jpeg=True, jpeg_quality=90, crop=False,
+                 severity_weights=(0.4, 0.4, 0.15, 0.05), fixed_severity=None,
                  mean=IMAGENET_MEAN, std=IMAGENET_STD):
         self.size = size
         self.train = train
         self.reencode = reencode_jpeg
         self.q = jpeg_quality
+        self.crop = crop
         self.sw = severity_weights
         self.fixed = fixed_severity
         self.mean = np.array(mean, np.float32)
@@ -96,8 +115,8 @@ class DetectionTransform:
             n = self._n_ops()
             if n > 0:
                 b = apply_degradation(b, n)
-        b = canonical_resize(b, self.size)
-        if self.reencode:                       # shortcut-control normalization
+        b = crop_native(b, self.size, center=not self.train) if self.crop else canonical_resize(b, self.size)
+        if self.reencode:
             b = jpeg_reencode(b, self.q)
         rgb = cv2.cvtColor(b, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         rgb = (rgb - self.mean) / self.std
